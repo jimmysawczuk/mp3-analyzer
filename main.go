@@ -2,7 +2,8 @@ package main
 
 import (
 	"bytes"
-	"encoding/binary"
+	// "encoding/binary"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -11,11 +12,43 @@ import (
 type MP3 struct {
 	id3_data map[string]string
 
-	Title  string
-	Artist string
+	Title  string `json:"title"`
+	Artist string `json:"artist"`
 
-	Size   int64
-	Length time.Duration
+	Size     int64         `json:"size"`
+	Duration time.Duration `json:"duration"`
+}
+
+type MP3Version int16
+
+const (
+	// Version25 MP3Version = 0
+	Version2 = 2
+	Version1 = 3
+)
+
+type MP3Layer int16
+
+const (
+	LayerIII MP3Layer = 1
+	LayerII           = 2
+	LayerI            = 3
+)
+
+var bitrates BitrateMap
+var sampling_rates SampleMap
+
+type FrameHeader struct {
+	raw_string string
+	valid      bool
+
+	Version MP3Version
+	Layer   MP3Layer
+
+	Bitrate      int
+	SamplingRate int
+
+	FrameSize int
 }
 
 func NewMP3() MP3 {
@@ -37,64 +70,101 @@ func (i *MP3) AddID3(tag string, value string) {
 }
 
 func main() {
-
-	fp := os.Stdin
-
-	file_buffer := bytes.NewBuffer([]byte{})
-	n, _ := file_buffer.ReadFrom(fp)
-
-	header := bytes.NewBuffer([]byte{})
-	data := bytes.NewBuffer([]byte{})
+	mp3 := NewMP3()
 
 	id3_seen := false
 
-	var seconds float64 = 0
-	mp3 := NewMP3()
+	fp := os.Stdin
+	buf := bytes.NewBuffer([]byte{})
+
+	n, err := buf.ReadFrom(fp)
+	if err != nil {
+		panic(err)
+	}
 	mp3.Size = n
 
-	for {
-		a, err := file_buffer.ReadByte()
-		if err != nil {
-			break
-		}
+	by := buf.Bytes()
+	i := 0
+	var seconds float64
 
-		data.WriteByte(a)
+	for i < len(by) {
+		if hdr := parseHeader(by[i : i+4]); hdr.valid {
+			idx := i + hdr.FrameSize
+			next_hdr := parseHeader(by[idx : idx+4])
+			if next_hdr.valid {
+				// fmt.Printf("%#v %#v\n", hdr, next_hdr)
+				if !id3_seen && bytes.NewBuffer(by[0:3]).String() == "ID3" {
+					parseID3(bytes.NewBuffer(by[0:i]), &mp3)
+					id3_seen = true
+				}
 
-		if a == byte(255) && header.Len() == 0 {
-			header.WriteByte(a)
-		} else if a>>5 == byte(7) && header.Len() == 1 {
-			header.WriteByte(a)
-		} else if header.Len() >= 2 && header.Len() < 4 {
-			header.WriteByte(a)
-		} else if header.Len() > 0 {
-			header.Reset()
-		}
+				seconds += float64(hdr.FrameSize*8.0) / float64(1000.0*hdr.Bitrate)
+				fmt.Println(seconds)
 
-		if header.Len() == 4 {
-			parseHeader(header)
-
-			if !id3_seen {
-				parseID3(data, &mp3)
-				id3_seen = true
+				i = i + hdr.FrameSize
 			} else {
-				seconds += float64(data.Len()*8) / float64(1000.0*48.0)
+				i++
 			}
-
-			header.Reset()
-			data.Reset()
+		} else {
+			i++
 		}
 	}
 
-	mp3.Length, _ = time.ParseDuration(fmt.Sprintf("%.3fs", seconds))
+	mp3.Duration, _ = time.ParseDuration(fmt.Sprintf("%.3fs", seconds))
 
-	fmt.Println(mp3)
+	json_data, err := json.MarshalIndent(mp3, "", "   ")
+	fmt.Println(err)
+	fmt.Println(bytes.NewBuffer(json_data).String())
 }
 
-func parseHeader(header *bytes.Buffer) {
-	// we'll need this function at some point if we want to programmatically determine the bitrate
+func parseHeader(by []byte) (fh FrameHeader) {
+
+	fh.raw_string = fmt.Sprintf("%08b %08b %08b %08b", by[0], by[1], by[2], by[3])
+
+	fh.valid = by[0] == byte(255) && by[1]>>5 == byte(7)
+	if !fh.valid {
+		return
+	}
+
+	num := make([]int, len(by))
+	for i := 0; i < len(by); i++ {
+		num[i] = int(by[i])
+	}
+
+	version := num[1] >> 3 % 0x4
+	layer := num[1] >> 1 % 0x4
+
+	fh.Version = MP3Version(version)
+	fh.Layer = MP3Layer(layer)
+
+	bitrate_mask := num[2] >> 4
+	bitrate := bitrates.Get(MP3Version(version), MP3Layer(layer), byte(bitrate_mask))
+	fh.Bitrate = bitrate
+
+	sample_rate := (num[2] % 0x10) >> 2
+	fh.SamplingRate = sampling_rates.Get(sample_rate, MP3Version(version))
+
+	// if we have valid bitrates and sampling rates, we're valid
+	fh.valid = fh.valid && fh.Bitrate > 0 && fh.SamplingRate > 0
+
+	// the last two bits of the header cannot be 10
+	fh.valid = fh.valid && num[3]%4 != 3
+
+	padding := num[2] >> 1 % 2
+
+	if fh.valid {
+		if fh.Layer == LayerI {
+			fh.FrameSize = (12*(fh.Bitrate*1000)/(fh.SamplingRate) + padding) * 4
+		} else {
+			fh.FrameSize = 144*(fh.Bitrate*1000)/(fh.SamplingRate) + padding
+		}
+	}
+
+	return
 }
 
 func parseID3(data *bytes.Buffer, mp3 *MP3) {
+
 	h := data.Next(10)
 	_ = h
 
@@ -103,9 +173,7 @@ func parseID3(data *bytes.Buffer, mp3 *MP3) {
 
 		if len(frame_header) == 10 {
 			tag := frame_header[0:4]
-			size_buf := frame_header[4:8]
-			size := uint32(0)
-			binary.Read(bytes.NewBuffer(size_buf), binary.BigEndian, &size)
+			size := int(frame_header[4])<<24 + int(frame_header[5])<<16 + int(frame_header[6])<<8 + int(frame_header[7])
 			tag_data := data.Next(int(size))
 
 			mp3.AddID3(bytes.NewBuffer(tag).String(), bytes.NewBuffer(tag_data).String())
