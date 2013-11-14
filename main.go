@@ -99,7 +99,6 @@ func main() {
 				}
 
 				seconds += float64(hdr.FrameSize*8.0) / float64(1000.0*hdr.Bitrate)
-				fmt.Println(seconds)
 
 				i = i + hdr.FrameSize
 			} else {
