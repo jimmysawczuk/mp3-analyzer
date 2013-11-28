@@ -2,11 +2,11 @@ package main
 
 import (
 	"bytes"
-	// "encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
 	"time"
+	"unicode/utf8"
 )
 
 type MP3 struct {
@@ -111,6 +111,8 @@ func main() {
 
 	mp3.Duration, _ = time.ParseDuration(fmt.Sprintf("%.3fs", seconds))
 
+	// fmt.Println(mp3)
+
 	json_data, err := json.MarshalIndent(mp3, "", "   ")
 	fmt.Println(err)
 	fmt.Println(bytes.NewBuffer(json_data).String())
@@ -173,9 +175,26 @@ func parseID3(data *bytes.Buffer, mp3 *MP3) {
 		if len(frame_header) == 10 {
 			tag := frame_header[0:4]
 			size := int(frame_header[4])<<24 + int(frame_header[5])<<16 + int(frame_header[6])<<8 + int(frame_header[7])
+			flags := frame_header[8:10]
+
+			_ = flags
+
 			tag_data := data.Next(int(size))
 
-			mp3.AddID3(bytes.NewBuffer(tag).String(), bytes.NewBuffer(tag_data).String())
+			tag_name := bytes.NewBuffer(tag).String()
+			tag_value := make([]rune, 0)
+
+			for len(tag_data) > 0 {
+				r, size := utf8.DecodeRune(tag_data)
+
+				if int(r) != 0 {
+					tag_value = append(tag_value, r)
+				}
+
+				tag_data = tag_data[size:]
+			}
+
+			mp3.AddID3(tag_name, string(tag_value))
 		}
 	}
 }
