@@ -17,7 +17,7 @@ type MP3 struct {
 
 	Size     int64         `json:"size"`
 	Duration time.Duration `json:"duration"`
-	Bitrate float64 `json:"bitrate"`
+	Bitrate  float64       `json:"bitrate"`
 }
 
 type MP3Version int16
