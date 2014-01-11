@@ -17,6 +17,7 @@ type MP3 struct {
 
 	Size     int64         `json:"size"`
 	Duration time.Duration `json:"duration"`
+	Bitrate float64 `json:"bitrate"`
 }
 
 type MP3Version int16
@@ -86,6 +87,7 @@ func main() {
 	by := buf.Bytes()
 	i := 0
 	var seconds float64
+	var bitrate float64
 
 	for i < len(by) {
 		if hdr := parseHeader(by[i : i+4]); hdr.valid {
@@ -99,6 +101,7 @@ func main() {
 				}
 
 				seconds += float64(hdr.FrameSize*8.0) / float64(1000.0*hdr.Bitrate)
+				bitrate += float64(hdr.FrameSize*8.0) / float64(1000.0*hdr.Bitrate) * float64(hdr.Bitrate)
 
 				i = i + hdr.FrameSize
 			} else {
@@ -109,12 +112,12 @@ func main() {
 		}
 	}
 
+	mp3.Bitrate = bitrate / seconds
 	mp3.Duration, _ = time.ParseDuration(fmt.Sprintf("%.3fs", seconds))
 
 	// fmt.Println(mp3)
 
 	json_data, err := json.MarshalIndent(mp3, "", "   ")
-	fmt.Println(err)
 	fmt.Println(bytes.NewBuffer(json_data).String())
 }
 
