@@ -1,6 +1,6 @@
 # mp3-analyzer
 
-Right now, this program takes an MP3 file piped via STDIN, analyzes it for ID3 information as well as length and size, and dumps them to STDOUT. **This program is still heavily untested.**
+Right now, this program takes an MP3 file piped via STDIN, analyzes it for ID3 information as well as length and size, and dumps them to STDOUT in a JSON object. **This program is still heavily untested.**
 
 
 ## Installation
